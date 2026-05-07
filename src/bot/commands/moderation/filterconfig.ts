@@ -1,7 +1,6 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  PermissionFlagsBits,
   EmbedBuilder,
   ButtonBuilder,
   ButtonStyle,
@@ -14,16 +13,35 @@ import { BotCommand } from "../../client";
 import { BlockedWord } from "../../../database/models/BlockedWord";
 import { logger } from "../../../utils/logger";
 
+const ALLOWED_ROLES = [
+  "1389665074444238960", // Head Moderator
+  "1158116870600261712", // Admin
+];
+
 const command: BotCommand = {
   data: new SlashCommandBuilder()
     .setName("filterconfig")
-    .setDescription("Configure individual filter rules")
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDescription("Configure individual filter rules"),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    if (!interaction.guild) {
+    if (!interaction.guild || !interaction.member) {
       await interaction.reply({
         content: "This command can only be used in a server!",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // Check if user has required role
+    const memberRoles = interaction.member.roles;
+    const hasRequiredRole =
+      typeof memberRoles === "object" &&
+      "cache" in memberRoles &&
+      ALLOWED_ROLES.some((roleId) => memberRoles.cache.has(roleId));
+
+    if (!hasRequiredRole) {
+      await interaction.reply({
+        content: "You need the Head Moderator or Admin role to use this command.",
         ephemeral: true,
       });
       return;

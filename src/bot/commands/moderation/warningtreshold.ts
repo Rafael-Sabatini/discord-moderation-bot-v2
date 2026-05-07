@@ -1,13 +1,17 @@
 import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
-  PermissionFlagsBits,
   EmbedBuilder,
 } from "discord.js";
 import { BotCommand } from "../../client";
 import { WarningConfig } from "../../../database/models/WarningConfig";
 import { parseDuration } from "../../../utils/moderation";
 import { logger } from "../../../utils/logger";
+
+const ALLOWED_ROLES = [
+  "1389665074444238960", // Head Moderator
+  "1158116870600261712", // Admin
+];
 
 const command: BotCommand = {
   data: new SlashCommandBuilder()
@@ -37,13 +41,27 @@ const command: BotCommand = {
         .setName("duration")
         .setDescription("Duration for ban or timeout (e.g., 1h, 1d, 7d)")
         .setRequired(false),
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    ),
 
   execute: async (interaction: ChatInputCommandInteraction) => {
-    if (!interaction.guild) {
+    if (!interaction.guild || !interaction.member) {
       await interaction.reply({
         content: "This command can only be used in a server!",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // Check if user has required role
+    const memberRoles = interaction.member.roles;
+    const hasRequiredRole =
+      typeof memberRoles === "object" &&
+      "cache" in memberRoles &&
+      ALLOWED_ROLES.some((roleId) => memberRoles.cache.has(roleId));
+
+    if (!hasRequiredRole) {
+      await interaction.reply({
+        content: "You need the Head Moderator or Admin role to use this command.",
         ephemeral: true,
       });
       return;
