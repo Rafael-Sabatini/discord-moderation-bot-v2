@@ -91,15 +91,13 @@ const command: BotCommand = {
         selectMenu
       );
 
-      const message = await interaction.reply({
+      const response = await interaction.reply({
         embeds: [embed],
         components: [row],
-        ephemeral: true,
-        fetchReply: true,
       });
 
-      // Set up collector for interactions
-      const collector = message.createMessageComponentCollector({
+      // Set up collector for interactions using the client
+      const collector = response.createMessageComponentCollector({
         componentType: ComponentType.StringSelect,
         time: 15 * 60 * 1000, // 15 minutes
       });
@@ -146,22 +144,21 @@ const command: BotCommand = {
           )
           .setTimestamp();
 
-        await selectInteraction.reply({
+        const ruleMessage = await selectInteraction.reply({
           embeds: [ruleEmbed],
           components: [actionButtons],
           ephemeral: true,
+          fetchReply: true,
         });
 
-        // Handle action buttons
-        const actionCollector = message.createMessageComponentCollector({
-          componentType: ComponentType.Button,
-          time: 10 * 60 * 1000, // 10 minutes
-        });
+        // Wait for action button clicks
+        try {
+          const buttonClick = await ruleMessage.awaitMessageComponent({
+            componentType: ComponentType.Button,
+            time: 10 * 60 * 1000, // 10 minutes
+          });
 
-        actionCollector.on("collect", async (buttonInteraction: Interaction) => {
-          if (!buttonInteraction.isButton()) return;
-
-          if (buttonInteraction.customId === "change_severity") {
+          if (buttonClick.customId === "change_severity") {
             // Show severity options
             const severityButtons = new ActionRowBuilder<ButtonBuilder>().addComponents(
               new ButtonBuilder()
@@ -179,21 +176,21 @@ const command: BotCommand = {
               .setDescription("Select the severity level for this rule")
               .setColor(0x0099ff);
 
-            await buttonInteraction.reply({
+            const sevMessage = await buttonClick.reply({
               embeds: [severityEmbed],
               components: [severityButtons],
               ephemeral: true,
+              fetchReply: true,
             });
 
-            const severityCollector = message.createMessageComponentCollector({
-              componentType: ComponentType.Button,
-              time: 5 * 60 * 1000,
-            });
+            // Wait for severity button click
+            try {
+              const sevButtonClick = await sevMessage.awaitMessageComponent({
+                componentType: ComponentType.Button,
+                time: 5 * 60 * 1000,
+              });
 
-            severityCollector.on("collect", async (sevButtonInteraction: Interaction) => {
-              if (!sevButtonInteraction.isButton()) return;
-
-              if (sevButtonInteraction.customId === "severity_critical") {
+              if (sevButtonClick.customId === "severity_critical") {
                 await BlockedWord.updateOne(
                   { _id: selectedRule._id },
                   { severity: "critical" }
@@ -204,7 +201,7 @@ const command: BotCommand = {
                   .setDescription("Rule severity changed to **Critical**")
                   .setColor(0x00ff00);
 
-                await sevButtonInteraction.reply({
+                await sevButtonClick.reply({
                   embeds: [confirmEmbed],
                   ephemeral: true,
                 });
@@ -212,7 +209,7 @@ const command: BotCommand = {
                 logger.info(
                   `Filter rule severity changed to critical in guild ${interaction.guild!.id}`
                 );
-              } else if (sevButtonInteraction.customId === "severity_noncritical") {
+              } else if (sevButtonClick.customId === "severity_noncritical") {
                 await BlockedWord.updateOne(
                   { _id: selectedRule._id },
                   { severity: "non-critical" }
@@ -223,7 +220,7 @@ const command: BotCommand = {
                   .setDescription("Rule severity changed to **Non-Critical**")
                   .setColor(0x00ff00);
 
-                await sevButtonInteraction.reply({
+                await sevButtonClick.reply({
                   embeds: [confirmEmbed],
                   ephemeral: true,
                 });
@@ -232,8 +229,10 @@ const command: BotCommand = {
                   `Filter rule severity changed to non-critical in guild ${interaction.guild!.id}`
                 );
               }
-            });
-          } else if (buttonInteraction.customId === "delete_rule") {
+            } catch (error) {
+              logger.warn("Severity selection timed out or was cancelled");
+            }
+          } else if (buttonClick.customId === "delete_rule") {
             // Confirm deletion
             const confirmButtons = new ActionRowBuilder<ButtonBuilder>().addComponents(
               new ButtonBuilder()
@@ -251,21 +250,21 @@ const command: BotCommand = {
               .setDescription(`Are you sure you want to delete this rule?\n\nPattern: \`${selectedRule.pattern}\``)
               .setColor(0xff0000);
 
-            await buttonInteraction.reply({
+            const delMessage = await buttonClick.reply({
               embeds: [confirmEmbed],
               components: [confirmButtons],
               ephemeral: true,
+              fetchReply: true,
             });
 
-            const deleteCollector = message.createMessageComponentCollector({
-              componentType: ComponentType.Button,
-              time: 5 * 60 * 1000,
-            });
+            // Wait for delete confirmation
+            try {
+              const deleteButtonClick = await delMessage.awaitMessageComponent({
+                componentType: ComponentType.Button,
+                time: 5 * 60 * 1000,
+              });
 
-            deleteCollector.on("collect", async (deleteButtonInteraction: Interaction) => {
-              if (!deleteButtonInteraction.isButton()) return;
-
-              if (deleteButtonInteraction.customId === "confirm_delete") {
+              if (deleteButtonClick.customId === "confirm_delete") {
                 await BlockedWord.deleteOne({ _id: selectedRule._id });
 
                 const deletedEmbed = new EmbedBuilder()
@@ -273,7 +272,7 @@ const command: BotCommand = {
                   .setDescription("The filter rule has been successfully deleted")
                   .setColor(0x00ff00);
 
-                await deleteButtonInteraction.reply({
+                await deleteButtonClick.reply({
                   embeds: [deletedEmbed],
                   ephemeral: true,
                 });
@@ -281,21 +280,23 @@ const command: BotCommand = {
                 logger.info(
                   `Filter rule deleted from guild ${interaction.guild!.id}`
                 );
-              } else if (deleteButtonInteraction.customId === "cancel_delete") {
+              } else if (deleteButtonClick.customId === "cancel_delete") {
                 const cancelEmbed = new EmbedBuilder()
                   .setTitle("❌ Deletion Cancelled")
                   .setColor(0xff9900);
 
-                await deleteButtonInteraction.reply({
+                await deleteButtonClick.reply({
                   embeds: [cancelEmbed],
                   ephemeral: true,
                 });
               }
-
-              deleteCollector.stop();
-            });
+            } catch (error) {
+              logger.warn("Delete confirmation timed out or was cancelled");
+            }
           }
-        });
+        } catch (error) {
+          logger.warn("Action button selection timed out or was cancelled");
+        }
       });
 
       collector.on("end", () => {
