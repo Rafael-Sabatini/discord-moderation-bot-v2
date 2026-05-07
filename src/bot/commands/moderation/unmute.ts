@@ -15,7 +15,7 @@ import { logger } from "../../../utils/logger";
 const command: BotCommand = {
   data: new SlashCommandBuilder()
     .setName("unmute")
-    .setDescription("Unmute a user")
+    .setDescription("Unmute a user (removes timeout)")
     .addStringOption((option) =>
       option
         .setName("user")
@@ -23,7 +23,6 @@ const command: BotCommand = {
         .setRequired(true),
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
-
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!interaction.guild) {
       await interaction.reply({
@@ -34,7 +33,6 @@ const command: BotCommand = {
     }
 
     const userIdentifier = interaction.options.getString("user", true);
-
     const targetUser = await resolveUser(interaction.guild, userIdentifier);
     if (!targetUser) {
       await interaction.reply({
@@ -45,30 +43,41 @@ const command: BotCommand = {
     }
 
     try {
+      await interaction.deferReply({ ephemeral: true });
+
       const member = await interaction.guild.members.fetch(targetUser.id);
 
+      // Check if user has an active mute record in database
       const mute = await Mute.findOne({
         userId: targetUser.id,
         guildId: interaction.guild.id,
         isActive: true,
       });
 
-      if (!mute) {
-        await interaction.reply({
-          content: `${targetUser.tag} is not muted!`,
-          ephemeral: true,
+      // Check if user is actually timed out (has an active timeout)
+      const isTimedOut = member.communicationDisabledUntil !== null;
+
+      // If no mute record and no timeout, user is not muted
+      if (!mute && !isTimedOut) {
+        await interaction.editReply({
+          content: `${targetUser.tag} is not muted or timed out!`,
         });
         return;
       }
 
-      mute.isActive = false;
-      await mute.save();
+      // Deactivate the mute record if it exists
+      if (mute) {
+        mute.isActive = false;
+        await mute.save();
+      }
 
-      await member.timeout(null);
+      // Remove the timeout (if one exists)
+      if (isTimedOut) {
+        await member.timeout(null, "Unmuted by moderator");
+      }
 
-      await interaction.reply({
+      await interaction.editReply({
         content: `✅ User ${targetUser.tag} has been unmuted.`,
-        ephemeral: true,
       });
 
       await sendLoggingEmbed(
@@ -81,7 +90,16 @@ const command: BotCommand = {
             value: `${targetUser.tag} (${targetUser.id})`,
             inline: true,
           },
-          { name: "Moderator", value: `${interaction.user.tag}`, inline: true },
+          {
+            name: "Moderator",
+            value: `${interaction.user.tag} (${interaction.user.id})`,
+            inline: true,
+          },
+          {
+            name: "Reason",
+            value: mute ? "Database mute removed" : "Timeout removed",
+            inline: true,
+          },
         ],
         0x00ff00,
       );
@@ -91,9 +109,8 @@ const command: BotCommand = {
       );
     } catch (error) {
       logger.error("Error unmuting user:", error);
-      await interaction.reply({
+      await interaction.editReply({
         content: "An error occurred while unmuting the user.",
-        ephemeral: true,
       });
     }
   },
