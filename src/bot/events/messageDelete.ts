@@ -49,58 +49,65 @@ export default {
         logger.warn("Could not fetch audit logs for message deletion:", error);
       }
 
-      // Create embed with improved styling
+      // Create minimalistic embed
       const embed = new EmbedBuilder()
-        .setColor(0xff4444) // Vibrant red
-        .setTitle("🗑️ Message Deleted")
+        .setColor(0xff6b6b)
+        .setTitle("Message Deleted")
         .setAuthor({
           name: message.author.tag,
           iconURL: message.author.displayAvatarURL({ size: 64 }),
         })
-        .setDescription(
-          message.content
-            ? `\`\`\`\n${message.content.substring(0, 1024)}\n\`\`\``
-            : "*No text content*",
-        )
-        .addFields(
-          {
-            name: "👤 Author",
-            value: `<@${message.author.id}> (${message.author.id})`,
+        .addFields({
+          name: "Channel",
+          value: `<#${message.channelId}>`,
+          inline: true,
+        });
+
+      // Add deleted by info if available
+      if (deletedById) {
+        embed.addFields({
+          name: "Deleted by",
+          value: `<@${deletedById}>`,
+          inline: true,
+        });
+      }
+
+      // Add content if present
+      if (message.content) {
+        const truncatedContent =
+          message.content.length > 256
+            ? message.content.substring(0, 253) + "..."
+            : message.content;
+        embed.addFields({
+          name: "Content",
+          value: truncatedContent,
+          inline: false,
+        });
+      }
+
+      // Extract and add images from attachments
+      const images = message.attachments.filter((attachment) =>
+        attachment.contentType?.startsWith("image/"),
+      );
+
+      if (images.size > 0) {
+        // Set the first image as the embed image
+        const firstImage = images.first();
+        if (firstImage) {
+          embed.setImage(firstImage.url);
+        }
+
+        // If there are multiple images, add info about them
+        if (images.size > 1) {
+          embed.addFields({
+            name: "Attachments",
+            value: `${images.size} image(s) deleted`,
             inline: true,
-          },
-          {
-            name: "📍 Channel",
-            value: `<#${message.channelId}>`,
-            inline: true,
-          },
-          {
-            name: "🔨 Deleted By",
-            value: deletedById
-              ? `<@${deletedById}> (${deletedByTag})`
-              : "`Unknown`",
-            inline: true,
-          },
-          {
-            name: "⏰ Created",
-            value: `<t:${Math.floor(message.createdTimestamp / 1000)}:f>`,
-            inline: true,
-          },
-          {
-            name: "📌 Message ID",
-            value: `\`${message.id}\``,
-            inline: true,
-          },
-          {
-            name: "💬 Channel ID",
-            value: `\`${message.channelId}\``,
-            inline: true,
-          },
-        )
-        .setFooter({
-          text: `User ID: ${message.author.id}`,
-          iconURL: message.author.displayAvatarURL({ size: 32 }),
-        })
-        .setTimestamp();
+          });
+        }
+      }
+
+      embed.setTimestamp();
 
       // Send to logging channel
       await loggingChannel.send({ embeds: [embed] });
@@ -119,7 +126,7 @@ export default {
       });
 
       logger.info(
-        `Message deleted - Author: ${message.author.tag}, Deleted by: ${deletedByTag}`,
+        `Message deleted - Author: ${message.author.tag}, Deleted by: ${deletedByTag}, Channel: ${message.channelId}`,
       );
     } catch (error) {
       logger.error("Error handling messageDelete event:", error);

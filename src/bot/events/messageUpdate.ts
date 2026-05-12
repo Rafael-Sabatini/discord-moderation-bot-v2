@@ -30,7 +30,7 @@ export default {
       }
 
       // Truncate long messages for readability
-      const maxLength = 1024;
+      const maxLength = 256;
       const oldContent =
         oldMessage.content && oldMessage.content.length > maxLength
           ? oldMessage.content.substring(0, maxLength - 3) + "..."
@@ -41,56 +41,54 @@ export default {
           ? newMessage.content.substring(0, maxLength - 3) + "..."
           : newMessage.content || "*No text content*";
 
-      // Create embed with improved styling
+      // Create minimalistic embed
       const embed = new EmbedBuilder()
-        .setColor(0xffa500) // Orange
-        .setTitle("✏️ Message Edited")
+        .setColor(0xffa500)
+        .setTitle("Message Edited")
         .setAuthor({
           name: newMessage.author.tag,
           iconURL: newMessage.author.displayAvatarURL({ size: 64 }),
         })
         .addFields(
           {
-            name: "👤 Author",
-            value: `<@${newMessage.author.id}> (${newMessage.author.id})`,
-            inline: true,
-          },
-          {
-            name: "📍 Channel",
+            name: "Channel",
             value: `<#${newMessage.channelId}>`,
             inline: true,
           },
           {
-            name: "⏰ Sent",
-            value: `<t:${Math.floor(newMessage.createdTimestamp / 1000)}:f>`,
-            inline: true,
-          },
-          {
-            name: "📝 Original",
-            value: `\`\`\`\n${oldContent}\n\`\`\``,
+            name: "Before",
+            value: oldContent,
             inline: false,
           },
           {
-            name: "📝 Updated",
-            value: `\`\`\`\n${newContent}\n\`\`\``,
+            name: "After",
+            value: newContent,
             inline: false,
-          },
-          {
-            name: "📌 Message ID",
-            value: `\`${newMessage.id}\``,
-            inline: true,
-          },
-          {
-            name: "💬 Channel ID",
-            value: `\`${newMessage.channelId}\``,
-            inline: true,
           },
         )
-        .setFooter({
-          text: `User ID: ${newMessage.author.id}`,
-          iconURL: newMessage.author.displayAvatarURL({ size: 32 }),
-        })
         .setTimestamp();
+
+      // Extract and add images from attachments
+      const images = newMessage.attachments.filter((attachment) =>
+        attachment.contentType?.startsWith("image/"),
+      );
+
+      if (images.size > 0) {
+        // Set the first image as the embed image
+        const firstImage = images.first();
+        if (firstImage) {
+          embed.setImage(firstImage.url);
+        }
+
+        // If there are multiple images, add info about them
+        if (images.size > 1) {
+          embed.addFields({
+            name: "Attachments",
+            value: `${images.size} image(s) in message`,
+            inline: true,
+          });
+        }
+      }
 
       // Send to logging channel
       await loggingChannel.send({ embeds: [embed] });
