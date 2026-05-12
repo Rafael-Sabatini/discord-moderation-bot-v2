@@ -11,14 +11,6 @@ import { logger } from "../../../utils/logger";
 
 const command: BotCommand = {
   data: new SlashCommandBuilder()
-    .setName("purge")
-    .setDescription("Purge messages")
-    .addStringOption((option) =>
-      option
-        .setName("user")
-        .setDescription("User ID or username to purge messages from (optional)")
-        .setRequired(false),
-    )
     .addIntegerOption((option) =>
       option
         .setName("range")
@@ -26,6 +18,14 @@ const command: BotCommand = {
         .setMinValue(1)
         .setMaxValue(1000)
         .setRequired(true),
+    )
+    .setName("purge")
+    .setDescription("Purge messages")
+    .addStringOption((option) =>
+      option
+        .setName("user")
+        .setDescription("User ID or username to purge messages from (optional)")
+        .setRequired(false),
     )
     .addStringOption((option) =>
       option
