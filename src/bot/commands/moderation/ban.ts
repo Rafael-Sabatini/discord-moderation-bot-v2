@@ -3,6 +3,8 @@ import {
   ChatInputCommandInteraction,
   PermissionFlagsBits,
   ChannelType,
+  EmbedBuilder,
+  AttachmentBuilder,
 } from "discord.js";
 import { BotCommand } from "../../client";
 import { Ban } from "../../../database/models/Ban";
@@ -62,6 +64,9 @@ const command: BotCommand = {
       return;
     }
 
+    // Defer the reply since this might take a while
+    await interaction.deferReply({ ephemeral: true });
+
     try {
       let expiryDate: Date | null = null;
       let isPermanent = true;
@@ -70,9 +75,8 @@ const command: BotCommand = {
       if (durationStr) {
         const durationMs = parseDuration(durationStr);
         if (durationMs === 0) {
-          await interaction.reply({
+          await interaction.editReply({
             content: "Invalid duration format! Use: 10s, 5m, 2h, or 1d",
-            ephemeral: true,
           });
           return;
         }
@@ -91,86 +95,114 @@ const command: BotCommand = {
       });
       await ban.save();
 
-      // Ban the user
+      // Ban the user first
       await interaction.guild.members.ban(targetUser, { reason });
 
-      // Delete all messages from the banned user
+      // Delete all messages from the banned user and get transcript
       let deletedCount = 0;
+      let transcriptFile: AttachmentBuilder | null = null;
+
       try {
-        deletedCount = await deleteUserMessages(
+        const result = await deleteUserMessagesWithTranscript(
           interaction.guild,
           targetUser.id,
         );
+        deletedCount = result.count;
+        transcriptFile = result.attachment;
       } catch (error) {
         logger.warn(
-          `Failed to delete all messages for user ${targetUser.id}:`,
+          `Failed to delete messages for user ${targetUser.id}:`,
           error,
         );
         // Continue with the ban even if message deletion fails
       }
 
-      await interaction.reply({
+      // Send the reply
+      await interaction.editReply({
         content: `✅ User ${targetUser.tag} has been banned (${durationDisplay}).\n${deletedCount > 0 ? `Deleted ${deletedCount} message(s).\n` : ""}Reason: ${reason}`,
-        ephemeral: true,
       });
 
-      await sendLoggingEmbed(
-        interaction.guild,
+      // Send logging embed with transcript
+      const loggingChannel = await interaction.guild.channels.fetch(
         LOGGING_CHANNELS.bans,
-        "🔨 User Banned",
-        [
-          {
-            name: "User",
-            value: `${targetUser.tag} (${targetUser.id})`,
-            inline: true,
-          },
-          { name: "Duration", value: durationDisplay, inline: true },
-          { name: "Moderator", value: `${interaction.user.tag}`, inline: true },
-          {
-            name: "Messages Deleted",
-            value: `${deletedCount}`,
-            inline: true,
-          },
-          { name: "Reason", value: reason, inline: false },
-        ],
-        0xff0000,
       );
+
+      if (loggingChannel && loggingChannel.isTextBased()) {
+        const embed = new EmbedBuilder()
+          .setColor(0xff0000)
+          .setTitle("🔨 User Banned")
+          .addFields(
+            {
+              name: "User",
+              value: `${targetUser.tag} (${targetUser.id})`,
+              inline: true,
+            },
+            { name: "Duration", value: durationDisplay, inline: true },
+            {
+              name: "Moderator",
+              value: `${interaction.user.tag}`,
+              inline: true,
+            },
+            {
+              name: "Messages Deleted",
+              value: `${deletedCount}`,
+              inline: true,
+            },
+            { name: "Reason", value: reason, inline: false },
+          )
+          .setTimestamp();
+
+        const messageData: {
+          embeds: EmbedBuilder[];
+          files?: AttachmentBuilder[];
+        } = {
+          embeds: [embed],
+        };
+
+        if (transcriptFile) {
+          messageData.files = [transcriptFile];
+        }
+
+        await loggingChannel.send(messageData);
+      }
 
       logger.info(
         `User ${targetUser.id} banned by ${interaction.user.id} (${durationDisplay}) in guild ${interaction.guild.id}. Deleted ${deletedCount} messages.`,
       );
     } catch (error) {
       logger.error("Error banning user:", error);
-      await interaction.reply({
+      await interaction.editReply({
         content: "An error occurred while banning the user.",
-        ephemeral: true,
       });
     }
   },
 };
 
 /**
- * Deletes all messages from a specific user across all text channels in the guild
+ * Deletes all messages from a specific user and creates a transcript
  * @param guild The Discord guild
  * @param userId The ID of the user whose messages should be deleted
- * @returns The total number of messages deleted
+ * @returns Object containing the count of deleted messages and transcript attachment
  */
-async function deleteUserMessages(
+async function deleteUserMessagesWithTranscript(
   guild: import("discord.js").Guild,
   userId: string,
-): Promise<number> {
+): Promise<{ count: number; attachment: AttachmentBuilder | null }> {
   let totalDeleted = 0;
+  const deletedMessages: Array<{
+    timestamp: string;
+    author: string;
+    content: string;
+    channel: string;
+    attachments: Array<{ name: string; size: string }>;
+  }> = [];
 
   // Fetch all channels in the guild
   const channels = await guild.channels.fetch();
 
   for (const channel of channels.values()) {
     // Only process text-based channels
-    if (
-      !channel ||
-      (channel.type !== ChannelType.GuildText &&
-        channel.type !== ChannelType.GuildVoice)
-    ) {
+    if (!channel || channel.type !== ChannelType.GuildText) {
       continue;
     }
 
@@ -193,6 +225,20 @@ async function deleteUserMessages(
         for (const message of messages.values()) {
           if (message.author.id === userId) {
             try {
+              // Store message info before deletion
+              deletedMessages.push({
+                timestamp: new Date(message.createdTimestamp).toISOString(),
+                author: message.author.tag,
+                content: message.content || "(No text content)",
+                channel: `#${(channel as any).name}`,
+                attachments: Array.from(message.attachments.values()).map(
+                  (att) => ({
+                    name: att.name || "unknown",
+                    size: formatFileSize(att.size),
+                  }),
+                ),
+              });
+
               await message.delete();
               totalDeleted++;
               batchDeleted = true;
@@ -208,13 +254,79 @@ async function deleteUserMessages(
       }
     } catch (error) {
       logger.warn(
-        `Error processing channel ${channel.name} (${channel.id}):`,
+        `Error processing channel ${(channel as any).name} (${channel.id}):`,
         error,
       );
     }
   }
 
-  return totalDeleted;
+  // Generate transcript
+  let transcriptFile: AttachmentBuilder | null = null;
+  if (deletedMessages.length > 0) {
+    const transcript = generateBanTranscript(deletedMessages, guild.name);
+    const transcriptBuffer = Buffer.from(transcript);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    transcriptFile = new AttachmentBuilder(transcriptBuffer, {
+      name: `ban_transcript_${userId}_${timestamp}.txt`,
+    });
+  }
+
+  return { count: totalDeleted, attachment: transcriptFile };
+}
+
+/**
+ * Generates a transcript of deleted messages from a ban
+ * @param messages Array of deleted messages
+ * @param guildName Name of the guild
+ * @returns Formatted transcript string
+ */
+function generateBanTranscript(
+  messages: Array<{
+    timestamp: string;
+    author: string;
+    content: string;
+    channel: string;
+    attachments: Array<{ name: string; size: string }>;
+  }>,
+  guildName: string,
+): string {
+  let transcript = `=== BAN MESSAGE TRANSCRIPT ===\n`;
+  transcript += `Guild: ${guildName}\n`;
+  transcript += `Purged: ${new Date().toISOString()}\n`;
+  transcript += `Total Messages: ${messages.length}\n`;
+  transcript += `${"=".repeat(50)}\n\n`;
+
+  for (const msg of messages) {
+    transcript += `[${msg.timestamp}] ${msg.author} in ${msg.channel}:\n`;
+    transcript += `${msg.content}\n`;
+
+    if (msg.attachments.length > 0) {
+      transcript += `Attachments:\n`;
+      msg.attachments.forEach((att) => {
+        transcript += `  - ${att.name} (${att.size})\n`;
+      });
+    }
+
+    transcript += `\n`;
+  }
+
+  transcript += `${"=".repeat(50)}\n`;
+  transcript += `End of transcript`;
+
+  return transcript;
+}
+
+/**
+ * Formats file size in human-readable format
+ * @param bytes File size in bytes
+ * @returns Formatted file size string
+ */
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 }
 
 export default command;
