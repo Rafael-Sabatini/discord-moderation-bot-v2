@@ -71,22 +71,28 @@ const command: BotCommand = {
           .map((ch: any) => ch) as any[];
       }
 
-      // Collect messages from all target channels up to the range limit
-      let messagesRemaining = range;
-      for (const channel of targetChannels) {
-        if (messagesRemaining <= 0) break;
+      // Collect messages from all target channels
+      // When filtering by user, we need to fetch more messages to get enough from that user
+      const fetchMultiplier = userIdentifier ? 10 : 1; // Fetch more when filtering by user
+      let messagesRemaining = range * fetchMultiplier;
 
-        const fetchLimit = Math.min(messagesRemaining, 100); // Discord has a max fetch of 100
+      for (const channel of targetChannels) {
+        if (userIdentifier && messages.length >= range) break; // Have enough for user filter
+        if (!userIdentifier && messagesRemaining <= 0) break;
+
+        const fetchLimit = Math.min(messagesRemaining || 100, 100); // Discord has a max fetch of 100
         const channelMessages = await channel.messages.fetch({
           limit: fetchLimit,
         });
 
+        if (channelMessages.size === 0) continue;
+
         channelMessages.forEach((msg: any) => {
           messages.push(msg);
-          messagesRemaining--;
+          if (!userIdentifier) {
+            messagesRemaining--;
+          }
         });
-
-        if (messagesRemaining <= 0) break;
       }
 
       // Filter by user if specified
@@ -98,6 +104,8 @@ const command: BotCommand = {
               .toLowerCase()
               .includes(userIdentifier.toLowerCase()),
         );
+        // Trim to range if we have more than needed
+        messages = messages.slice(0, range);
       }
 
       if (messages.length === 0) {
