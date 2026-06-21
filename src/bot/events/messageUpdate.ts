@@ -7,7 +7,7 @@ const LOGGING_CHANNEL_ID = "1403026519118581863";
 
 export default {
   name: "messageUpdate",
-  async execute(client: BotClient, oldMessage: Message, newMessage: Message) {
+  async execute(_client: BotClient, oldMessage: Message, newMessage: Message) {
     try {
       // Ignore bot messages and DMs
       if (newMessage.author?.bot || newMessage.channel?.type === ChannelType.DM)
@@ -94,17 +94,19 @@ export default {
       await loggingChannel.send({ embeds: [embed] });
 
       // Log to database
-      await MessageLog.create({
-        guildId: newMessage.guildId,
-        channelId: newMessage.channelId,
-        messageId: newMessage.id,
-        authorId: newMessage.author.id,
-        authorTag: newMessage.author.tag,
-        content: newMessage.content,
-        action: "edited",
-        oldContent: oldMessage.content,
-        newContent: newMessage.content,
-      });
+      if (newMessage.guildId && newMessage.channelId) {
+        await MessageLog.create({
+          guildId: newMessage.guildId,
+          channelId: newMessage.channelId,
+          messageId: newMessage.id,
+          authorId: newMessage.author.id,
+          authorTag: newMessage.author.tag,
+          content: newMessage.content,
+          action: "edited",
+          oldContent: oldMessage.content,
+          newContent: newMessage.content,
+        });
+      }
 
       logger.info(
         `Message edited - Author: ${newMessage.author.tag}, Channel: ${newMessage.channelId}`,

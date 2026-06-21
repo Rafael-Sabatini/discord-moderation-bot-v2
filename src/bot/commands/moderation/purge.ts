@@ -6,7 +6,7 @@ import {
   AttachmentBuilder,
 } from "discord.js";
 import { BotCommand } from "../../client";
-import { sendLoggingEmbed, LOGGING_CHANNELS } from "../../../utils/moderation";
+import { LOGGING_CHANNELS } from "../../../utils/moderation";
 import { logger } from "../../../utils/logger";
 
 const command: BotCommand = {

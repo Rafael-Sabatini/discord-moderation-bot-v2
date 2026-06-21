@@ -9,7 +9,6 @@ import {
 import { BotCommand } from "../../client";
 import { Ban } from "../../../database/models/Ban";
 import {
-  sendLoggingEmbed,
   resolveUser,
   parseDuration,
   LOGGING_CHANNELS,

@@ -151,10 +151,8 @@ async function showAllServerWarningsDeferred(
   const maxFieldsPerEmbed = 10;
 
   warningsByUser.forEach((userWarnings, userId) => {
-    const warningCount = userWarnings.length;
-
     // Create a field for each warning for this user
-    userWarnings.forEach((warning, warningIndex) => {
+    userWarnings.forEach((warning) => {
       const fieldValue = `**User:** <@${userId}>\n**Moderator:** <@${warning.moderatorId}>\n**Reason:** ${warning.reason}\n**Date:** <t:${Math.floor(warning.timestamp.getTime() / 1000)}:f>`;
 
       if (fieldCount >= maxFieldsPerEmbed) {

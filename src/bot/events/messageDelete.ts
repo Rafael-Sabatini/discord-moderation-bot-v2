@@ -7,7 +7,7 @@ const LOGGING_CHANNEL_ID = "1403026519118581863";
 
 export default {
   name: "messageDelete",
-  async execute(client: BotClient, message: Message) {
+  async execute(_client: BotClient, message: Message) {
     try {
       // Ignore bot messages and DMs
       if (message.author?.bot || message.channel?.type === ChannelType.DM)
@@ -27,9 +27,8 @@ export default {
       }
 
       // Try to get the user who deleted the message from audit logs
-      let deletedBy = "Unknown";
       let deletedByTag = "Unknown";
-      let deletedById = null;
+      let deletedById: string | null = null;
       try {
         const auditLogs = await guild.fetchAuditLogs({
           type: 72, // MESSAGE_DELETE
@@ -41,9 +40,8 @@ export default {
             Date.now() - entry.createdTimestamp < 5000, // Within 5 seconds
         );
         if (deleteLog && deleteLog.executor) {
-          deletedBy = deleteLog.executor.username;
-          deletedByTag = deleteLog.executor.tag;
-          deletedById = deleteLog.executor.id;
+          deletedByTag = deleteLog.executor.tag || "Unknown";
+          deletedById = deleteLog.executor.id || null;
         }
       } catch (error) {
         logger.warn("Could not fetch audit logs for message deletion:", error);
@@ -113,17 +111,19 @@ export default {
       await loggingChannel.send({ embeds: [embed] });
 
       // Log to database
-      await MessageLog.create({
-        guildId: message.guildId,
-        channelId: message.channelId,
-        messageId: message.id,
-        authorId: message.author.id,
-        authorTag: message.author.tag,
-        content: message.content,
-        action: "deleted",
-        actionBy: deletedById,
-        actionByTag: deletedByTag,
-      });
+      if (message.guildId && message.channelId) {
+        await MessageLog.create({
+          guildId: message.guildId,
+          channelId: message.channelId,
+          messageId: message.id,
+          authorId: message.author.id,
+          authorTag: message.author.tag,
+          content: message.content,
+          action: "deleted",
+          actionBy: deletedById || undefined,
+          actionByTag: deletedByTag,
+        });
+      }
 
       logger.info(
         `Message deleted - Author: ${message.author.tag}, Deleted by: ${deletedByTag}, Channel: ${message.channelId}`,
