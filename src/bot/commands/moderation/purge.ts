@@ -49,8 +49,10 @@ const command: BotCommand = {
     const channelId = interaction.options.getString("channel");
 
     try {
-      let targetChannel = interaction.channel;
+      let targetChannels: any[] = [];
+      let messages: any[] = [];
 
+      // If channel is specified, only target that channel
       if (channelId) {
         const channel = await interaction.guild.channels.fetch(channelId);
         if (!channel || !channel.isTextBased()) {
@@ -60,21 +62,35 @@ const command: BotCommand = {
           });
           return;
         }
-        targetChannel = channel;
+        targetChannels = [channel];
+      } else {
+        // If no channel specified, fetch all text channels
+        const allChannels = await interaction.guild.channels.fetch();
+        targetChannels = allChannels
+          .filter((ch: any) => ch && ch.isTextBased())
+          .map((ch: any) => ch) as any[];
       }
 
-      if (!targetChannel.isTextBased()) {
-        await interaction.reply({
-          content: "This channel is not text-based!",
-          ephemeral: true,
+      // Collect messages from all target channels up to the range limit
+      let messagesRemaining = range;
+      for (const channel of targetChannels) {
+        if (messagesRemaining <= 0) break;
+
+        const fetchLimit = Math.min(messagesRemaining, 100); // Discord has a max fetch of 100
+        const channelMessages = await channel.messages.fetch({
+          limit: fetchLimit,
         });
-        return;
+
+        channelMessages.forEach((msg: any) => {
+          messages.push(msg);
+          messagesRemaining--;
+        });
+
+        if (messagesRemaining <= 0) break;
       }
 
-      let messages = await targetChannel.messages.fetch({ limit: range });
-
+      // Filter by user if specified
       if (userIdentifier) {
-        // Filter by user if specified
         messages = messages.filter(
           (msg) =>
             msg.author.id === userIdentifier ||
@@ -84,20 +100,47 @@ const command: BotCommand = {
         );
       }
 
-      // Create transcript before deletion
-      const transcript = generateTranscript(messages, targetChannel);
+      if (messages.length === 0) {
+        await interaction.reply({
+          content: "No messages found to delete.",
+          ephemeral: true,
+        });
+        return;
+      }
 
-      const deleted = await (targetChannel as any).bulkDelete(messages, true);
+      // Create transcript before deletion
+      const transcript = generateTranscript(messages, interaction.guild, channelId ? targetChannels[0] : null);
+
+      // Group messages by channel and delete
+      let totalDeleted = 0;
+      const messagesByChannel = new Map<string, any[]>();
+
+      for (const msg of messages) {
+        const chId = msg.channelId;
+        if (!messagesByChannel.has(chId)) {
+          messagesByChannel.set(chId, []);
+        }
+        messagesByChannel.get(chId)!.push(msg);
+      }
+
+      // Delete messages from each channel
+      for (const [chId, msgs] of messagesByChannel) {
+        const channel = await interaction.guild.channels.fetch(chId);
+        if (channel && channel.isTextBased()) {
+          const deleted = await (channel as any).bulkDelete(msgs, true);
+          totalDeleted += deleted.size;
+        }
+      }
 
       await interaction.reply({
-        content: `✅ Deleted ${deleted.size} messages.`,
+        content: `✅ Deleted ${totalDeleted} messages across ${messagesByChannel.size} channel(s).`,
         ephemeral: true,
       });
 
       // Create and upload transcript file
       const transcriptBuffer = Buffer.from(transcript);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const transcriptFileName = `purge_${targetChannel.id}_${timestamp}.txt`;
+      const transcriptFileName = `purge_${interaction.guild.id}_${timestamp}.txt`;
       const transcriptAttachment = new AttachmentBuilder(transcriptBuffer, {
         name: transcriptFileName,
       });
@@ -112,13 +155,13 @@ const command: BotCommand = {
           .setTitle("🗑️ Messages Purged")
           .addFields(
             {
-              name: "Channel",
-              value: `${(targetChannel as any).name} (${targetChannel.id})`,
+              name: "Scope",
+              value: channelId ? `Specific channel` : `All channels (${messagesByChannel.size})`,
               inline: true,
             },
             {
               name: "Messages Deleted",
-              value: deleted.size.toString(),
+              value: totalDeleted.toString(),
               inline: true,
             },
             {
@@ -140,7 +183,7 @@ const command: BotCommand = {
       }
 
       logger.info(
-        `${deleted.size} messages purged in guild ${interaction.guild.id} by ${interaction.user.id}`,
+        `${totalDeleted} messages purged in guild ${interaction.guild.id} by ${interaction.user.id} across ${messagesByChannel.size} channels`,
       );
     } catch (error) {
       logger.error("Error purging messages:", error);
@@ -154,16 +197,23 @@ const command: BotCommand = {
 
 /**
  * Generates a text transcript of messages
- * @param messages Collection of messages to transcribe
- * @param channel The channel the messages are from
+ * @param messages Array of messages to transcribe
+ * @param guild The guild the messages are from
+ * @param singleChannel Optional single channel if operation was channel-specific
  * @returns Formatted transcript string
  */
-function generateTranscript(messages: any, channel: any): string {
-  const sortedMessages = Array.from(messages.values()).reverse();
+function generateTranscript(messages: any, guild: any, singleChannel: any = null): string {
+  const sortedMessages = messages.sort(
+    (a: any, b: any) => a.createdTimestamp - b.createdTimestamp
+  );
 
   let transcript = `=== MESSAGE PURGE TRANSCRIPT ===\n`;
-  transcript += `Channel: ${channel.name} (#${channel.id})\n`;
-  transcript += `Guild: ${channel.guild.name}\n`;
+  if (singleChannel) {
+    transcript += `Channel: ${singleChannel.name} (#${singleChannel.id})\n`;
+  } else {
+    transcript += `Channels: Multiple\n`;
+  }
+  transcript += `Guild: ${guild.name}\n`;
   transcript += `Purged: ${new Date().toISOString()}\n`;
   transcript += `Total Messages: ${sortedMessages.length}\n`;
   transcript += `${"=".repeat(50)}\n\n`;
@@ -172,8 +222,9 @@ function generateTranscript(messages: any, channel: any): string {
     const timestamp = new Date(message.createdTimestamp).toISOString();
     const author = message.author.tag;
     const content = message.content || "(No text content)";
+    const channelName = message.channel?.name || `#${message.channelId}`;
 
-    transcript += `[${timestamp}] ${author}:\n`;
+    transcript += `[${timestamp}] ${author} (${channelName}):\n`;
     transcript += `${content}\n`;
 
     // Include attachment info

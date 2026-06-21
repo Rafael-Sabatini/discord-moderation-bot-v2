@@ -199,6 +199,7 @@ async function deleteUserMessagesWithTranscript(
 
   // Fetch all channels in the guild
   const channels = await guild.channels.fetch();
+  const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
 
   for (const channel of channels.values()) {
     // Only process text-based channels
@@ -207,12 +208,10 @@ async function deleteUserMessagesWithTranscript(
     }
 
     try {
-      // Fetch messages in batches and delete those from the user
       let lastMessageId: string | undefined;
-      let batchDeleted = true;
+      let hasMore = true;
 
-      while (batchDeleted) {
-        batchDeleted = false;
+      while (hasMore) {
         const messages = await channel.messages.fetch({
           limit: 100,
           before: lastMessageId,
@@ -222,34 +221,65 @@ async function deleteUserMessagesWithTranscript(
           break;
         }
 
+        // Separate messages into bulk-deletable (newer than 2 weeks) and old
+        const bulkDeleteable: Array<any> = [];
+        const oldMessages: Array<any> = [];
+
         for (const message of messages.values()) {
           if (message.author.id === userId) {
-            try {
-              // Store message info before deletion
-              deletedMessages.push({
-                timestamp: new Date(message.createdTimestamp).toISOString(),
-                author: message.author.tag,
-                content: message.content || "(No text content)",
-                channel: `#${(channel as any).name}`,
-                attachments: Array.from(message.attachments.values()).map(
-                  (att) => ({
-                    name: att.name || "unknown",
-                    size: formatFileSize(att.size),
-                  }),
-                ),
-              });
+            // Store message info for transcript
+            deletedMessages.push({
+              timestamp: new Date(message.createdTimestamp).toISOString(),
+              author: message.author.tag,
+              content: message.content || "(No text content)",
+              channel: `#${(channel as any).name}`,
+              attachments: Array.from(message.attachments.values()).map(
+                (att) => ({
+                  name: att.name || "unknown",
+                  size: formatFileSize(att.size),
+                }),
+              ),
+            });
 
-              await message.delete();
-              totalDeleted++;
-              batchDeleted = true;
-            } catch (error) {
-              logger.warn(
-                `Failed to delete message ${message.id} in channel ${channel.id}:`,
-                error,
-              );
+            // Categorize for deletion
+            if (message.createdTimestamp > twoWeeksAgo) {
+              bulkDeleteable.push(message);
+            } else {
+              oldMessages.push(message);
             }
           }
           lastMessageId = message.id;
+        }
+
+        // Bulk delete messages (much faster - up to 100 at a time)
+        if (bulkDeleteable.length > 0) {
+          try {
+            const deleted = await (channel as any).bulkDelete(bulkDeleteable, true);
+            totalDeleted += deleted.size;
+          } catch (error) {
+            logger.warn(
+              `Failed to bulk delete messages in channel ${channel.id}:`,
+              error,
+            );
+          }
+        }
+
+        // Delete old messages individually (can't bulk delete messages older than 2 weeks)
+        for (const message of oldMessages) {
+          try {
+            await message.delete();
+            totalDeleted++;
+          } catch (error) {
+            logger.warn(
+              `Failed to delete message ${message.id} in channel ${channel.id}:`,
+              error,
+            );
+          }
+        }
+
+        // Check if we should continue
+        if (messages.size < 100) {
+          hasMore = false;
         }
       }
     } catch (error) {
