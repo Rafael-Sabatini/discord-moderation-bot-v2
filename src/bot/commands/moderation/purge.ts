@@ -48,82 +48,140 @@ const command: BotCommand = {
     const range = interaction.options.getInteger("range") || 50;
     const channelId = interaction.options.getString("channel");
 
-    try {
-      let targetChannels: any[] = [];
-      let messages: any[] = [];
+    await interaction.deferReply({ ephemeral: true });
 
-      // If channel is specified, only target that channel
+    try {
+      // Determine target channels based on provided options:
+      // - channelid only or user + channelid → that specific channel
+      // - user only → all text channels
+      // - neither → current channel only
+      let targetChannels: any[] = [];
+
       if (channelId) {
         const channel = await interaction.guild.channels.fetch(channelId);
         if (!channel || !channel.isTextBased()) {
-          await interaction.reply({
-            content: "Invalid channel!",
-            ephemeral: true,
-          });
+          await interaction.editReply({ content: "Invalid channel!" });
           return;
         }
         targetChannels = [channel];
-      } else {
-        // If no channel specified, fetch all text channels
+      } else if (userIdentifier) {
         const allChannels = await interaction.guild.channels.fetch();
         targetChannels = allChannels
           .filter((ch: any) => ch && ch.isTextBased())
-          .map((ch: any) => ch) as any[];
+          .map((ch: any) => ch);
+      } else {
+        targetChannels = [interaction.channel];
       }
 
-      // Collect messages from all target channels
-      // When filtering by user, we need to fetch more messages to get enough from that user
-      const fetchMultiplier = userIdentifier ? 10 : 1; // Fetch more when filtering by user
-      let messagesRemaining = range * fetchMultiplier;
+      // bulkDelete cannot delete messages older than 14 days, so there is no
+      // point scanning past that cutoff.
+      const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - TWO_WEEKS_MS;
+      // Cap how many messages we scan per channel. When filtering by user we
+      // scan beyond `range` (not every message matches) but never forever.
+      const scanCap = userIdentifier ? Math.min(range * 10, 1000) : range;
 
-      for (const channel of targetChannels) {
-        if (userIdentifier && messages.length >= range) break; // Have enough for user filter
-        if (!userIdentifier && messagesRemaining <= 0) break;
+      // Accept a raw ID, a mention (<@123> / <@!123>), or a username substring.
+      const userIdDigits = userIdentifier
+        ? userIdentifier.replace(/\D/g, "")
+        : "";
+      const matchesUser = (msg: any) => {
+        if (!userIdentifier) return true;
+        if (userIdDigits && msg.author.id === userIdDigits) return true;
+        return msg.author.username
+          .toLowerCase()
+          .includes(userIdentifier.toLowerCase());
+      };
 
-        const fetchLimit = Math.min(messagesRemaining || 100, 100); // Discord has a max fetch of 100
-        const channelMessages = await channel.messages.fetch({
-          limit: fetchLimit,
-        });
+      // Collect matching messages from a single channel, paginating until we
+      // have `range`, cross the 14-day cutoff, run out, or hit the scan cap.
+      const collectFromChannel = async (channel: any) => {
+        const found: any[] = [];
+        let lastId: string | undefined;
+        let scanned = 0;
+        let hitCutoff = false;
+        let errored = false;
 
-        if (channelMessages.size === 0) continue;
+        try {
+          while (found.length < range && scanned < scanCap) {
+            const fetchOptions: any = { limit: 100 };
+            if (lastId) fetchOptions.before = lastId;
 
-        channelMessages.forEach((msg: any) => {
-          messages.push(msg);
-          if (!userIdentifier) {
-            messagesRemaining--;
+            const batch = await channel.messages.fetch(fetchOptions);
+            if (batch.size === 0) break;
+
+            for (const msg of batch.values()) {
+              scanned++;
+              if (found.length >= range) break;
+
+              // Messages are newest-first; stop at the 14-day boundary
+              if (msg.createdTimestamp < cutoff) {
+                hitCutoff = true;
+                break;
+              }
+
+              if (matchesUser(msg)) found.push(msg);
+            }
+
+            if (hitCutoff || batch.size < 100) break;
+            lastId = batch.last()?.id;
           }
-        });
-      }
+        } catch (err) {
+          // Missing access / read perms on a channel — skip it rather than abort
+          errored = true;
+          logger.warn(`Purge: could not read channel ${channel?.id}: ${err}`);
+        }
 
-      // Filter by user if specified
-      if (userIdentifier) {
-        messages = messages.filter(
-          (msg) =>
-            msg.author.id === userIdentifier ||
-            msg.author.username
-              .toLowerCase()
-              .includes(userIdentifier.toLowerCase()),
-        );
-        // Trim to range if we have more than needed
-        messages = messages.slice(0, range);
-      }
+        return { found, scanned, hitCutoff, errored };
+      };
 
-      if (messages.length === 0) {
-        await interaction.reply({
-          content: "No messages found to delete.",
-          ephemeral: true,
-        });
+      // Fetch channels in parallel. Message fetches are rate-limited per-channel,
+      // so independent channels don't contend — far faster than sequential.
+      const results = await Promise.all(
+        targetChannels.map((channel) => collectFromChannel(channel)),
+      );
+
+      // Merge matches from every channel and pick the most recent `range`
+      // messages by date, so the deletion spans channels in chronological
+      // order rather than draining the first channel first.
+      const collectedMessages = results
+        .flatMap((r) => r.found)
+        .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+        .slice(0, range);
+      const totalScanned = results.reduce((n, r) => n + r.scanned, 0);
+      const anyCutoff = results.some((r) => r.hitCutoff);
+      const allErrored =
+        results.length > 0 && results.every((r) => r.errored);
+
+      if (collectedMessages.length === 0) {
+        let reason = "No messages found to delete.";
+        if (allErrored) {
+          reason =
+            "Couldn't read the target channel(s). The bot needs **View Channel**, **Read Message History**, and **Manage Messages** permissions there.";
+        } else if (totalScanned === 0) {
+          reason = "There are no messages to scan in the target channel(s).";
+        } else if (userIdentifier) {
+          reason = `No messages from \`${userIdentifier}\` found in the last ${totalScanned} message(s) scanned. (Discord only allows bulk-deleting messages newer than 14 days.)`;
+        } else if (anyCutoff) {
+          reason =
+            "No messages newer than 14 days were found — Discord doesn't allow bulk-deleting older messages.";
+        }
+        await interaction.editReply({ content: reason });
         return;
       }
 
       // Create transcript before deletion
-      const transcript = generateTranscript(messages, interaction.guild, channelId ? targetChannels[0] : null);
+      const transcript = generateTranscript(
+        collectedMessages,
+        interaction.guild,
+        targetChannels.length === 1 ? targetChannels[0] : null,
+      );
 
-      // Group messages by channel and delete
+      // Group messages by channel and bulk-delete
       let totalDeleted = 0;
       const messagesByChannel = new Map<string, any[]>();
 
-      for (const msg of messages) {
+      for (const msg of collectedMessages) {
         const chId = msg.channelId;
         if (!messagesByChannel.has(chId)) {
           messagesByChannel.set(chId, []);
@@ -131,7 +189,6 @@ const command: BotCommand = {
         messagesByChannel.get(chId)!.push(msg);
       }
 
-      // Delete messages from each channel
       for (const [chId, msgs] of messagesByChannel) {
         const channel = await interaction.guild.channels.fetch(chId);
         if (channel && channel.isTextBased()) {
@@ -140,9 +197,8 @@ const command: BotCommand = {
         }
       }
 
-      await interaction.reply({
+      await interaction.editReply({
         content: `✅ Deleted ${totalDeleted} messages across ${messagesByChannel.size} channel(s).`,
-        ephemeral: true,
       });
 
       // Create and upload transcript file
@@ -158,15 +214,17 @@ const command: BotCommand = {
         LOGGING_CHANNELS.purges,
       );
       if (loggingChannel && loggingChannel.isTextBased()) {
+        const scopeLabel = channelId
+          ? `Specific channel`
+          : userIdentifier
+            ? `All channels (${messagesByChannel.size})`
+            : `Current channel`;
+
         const embed = new EmbedBuilder()
           .setColor(0x9400d3)
           .setTitle("🗑️ Messages Purged")
           .addFields(
-            {
-              name: "Scope",
-              value: channelId ? `Specific channel` : `All channels (${messagesByChannel.size})`,
-              inline: true,
-            },
+            { name: "Scope", value: scopeLabel, inline: true },
             {
               name: "Messages Deleted",
               value: totalDeleted.toString(),
@@ -195,9 +253,8 @@ const command: BotCommand = {
       );
     } catch (error) {
       logger.error("Error purging messages:", error);
-      await interaction.reply({
+      await interaction.editReply({
         content: "An error occurred while purging messages.",
-        ephemeral: true,
       });
     }
   },
