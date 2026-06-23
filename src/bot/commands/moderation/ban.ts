@@ -187,7 +187,6 @@ async function deleteUserMessagesWithTranscript(
   guild: import("discord.js").Guild,
   userId: string,
 ): Promise<{ count: number; attachment: AttachmentBuilder | null }> {
-  let totalDeleted = 0;
   const deletedMessages: Array<{
     timestamp: string;
     author: string;
@@ -196,42 +195,54 @@ async function deleteUserMessagesWithTranscript(
     attachments: Array<{ name: string; size: string }>;
   }> = [];
 
-  // Fetch all channels in the guild
   const channels = await guild.channels.fetch();
-  const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  // bulkDelete only works on messages newer than 14 days, so there's no point
+  // scanning (or trying to delete) anything older — that's what made this hang.
+  const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  // Safety bound so a very busy channel can't page indefinitely.
+  const MAX_SCAN_PER_CHANNEL = 1000;
 
-  for (const channel of channels.values()) {
-    // Only process text-based channels
-    if (!channel || channel.type !== ChannelType.GuildText) {
-      continue;
-    }
+  const textChannels = Array.from(channels.values()).filter(
+    (channel): channel is import("discord.js").TextChannel =>
+      !!channel && channel.type === ChannelType.GuildText,
+  );
+
+  // Collect and bulk-delete the banned user's recent messages in one channel,
+  // paginating newest-first and stopping at the 14-day cutoff or the scan cap.
+  const processChannel = async (
+    channel: import("discord.js").TextChannel,
+  ): Promise<number> => {
+    let deletedHere = 0;
+    let lastMessageId: string | undefined;
+    let scanned = 0;
 
     try {
-      let lastMessageId: string | undefined;
-      let hasMore = true;
+      while (scanned < MAX_SCAN_PER_CHANNEL) {
+        const fetchOptions: { limit: number; before?: string } = { limit: 100 };
+        if (lastMessageId) fetchOptions.before = lastMessageId;
 
-      while (hasMore) {
-        const messages = await channel.messages.fetch({
-          limit: 100,
-          before: lastMessageId,
-        });
+        const messages = await channel.messages.fetch(fetchOptions);
+        if (messages.size === 0) break;
 
-        if (messages.size === 0) {
-          break;
-        }
-
-        // Separate messages into bulk-deletable (newer than 2 weeks) and old
-        const bulkDeleteable: Array<any> = [];
-        const oldMessages: Array<any> = [];
+        const toDelete: any[] = [];
+        let reachedCutoff = false;
 
         for (const message of messages.values()) {
+          scanned++;
+          lastMessageId = message.id;
+
+          // Messages are newest-first; stop once we pass the 14-day boundary.
+          if (message.createdTimestamp < cutoff) {
+            reachedCutoff = true;
+            break;
+          }
+
           if (message.author.id === userId) {
-            // Store message info for transcript
             deletedMessages.push({
               timestamp: new Date(message.createdTimestamp).toISOString(),
               author: message.author.tag,
               content: message.content || "(No text content)",
-              channel: `#${(channel as any).name}`,
+              channel: `#${channel.name}`,
               attachments: Array.from(message.attachments.values()).map(
                 (att) => ({
                   name: att.name || "unknown",
@@ -239,22 +250,14 @@ async function deleteUserMessagesWithTranscript(
                 }),
               ),
             });
-
-            // Categorize for deletion
-            if (message.createdTimestamp > twoWeeksAgo) {
-              bulkDeleteable.push(message);
-            } else {
-              oldMessages.push(message);
-            }
+            toDelete.push(message);
           }
-          lastMessageId = message.id;
         }
 
-        // Bulk delete messages (much faster - up to 100 at a time)
-        if (bulkDeleteable.length > 0) {
+        if (toDelete.length > 0) {
           try {
-            const deleted = await (channel as any).bulkDelete(bulkDeleteable, true);
-            totalDeleted += deleted.size;
+            const deleted = await channel.bulkDelete(toDelete, true);
+            deletedHere += deleted.size;
           } catch (error) {
             logger.warn(
               `Failed to bulk delete messages in channel ${channel.id}:`,
@@ -263,35 +266,27 @@ async function deleteUserMessagesWithTranscript(
           }
         }
 
-        // Delete old messages individually (can't bulk delete messages older than 2 weeks)
-        for (const message of oldMessages) {
-          try {
-            await message.delete();
-            totalDeleted++;
-          } catch (error) {
-            logger.warn(
-              `Failed to delete message ${message.id} in channel ${channel.id}:`,
-              error,
-            );
-          }
-        }
-
-        // Check if we should continue
-        if (messages.size < 100) {
-          hasMore = false;
-        }
+        if (reachedCutoff || messages.size < 100) break;
       }
     } catch (error) {
       logger.warn(
-        `Error processing channel ${(channel as any).name} (${channel.id}):`,
+        `Error processing channel ${channel.name} (${channel.id}):`,
         error,
       );
     }
-  }
 
-  // Generate transcript
+    return deletedHere;
+  };
+
+  // Channels are independent rate-limit buckets, so scan them in parallel
+  // instead of one-after-another — far faster and won't appear to hang.
+  const counts = await Promise.all(textChannels.map(processChannel));
+  const totalDeleted = counts.reduce((sum, n) => sum + n, 0);
+
+  // Generate transcript (chronological order)
   let transcriptFile: AttachmentBuilder | null = null;
   if (deletedMessages.length > 0) {
+    deletedMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     const transcript = generateBanTranscript(deletedMessages, guild.name);
     const transcriptBuffer = Buffer.from(transcript);
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
