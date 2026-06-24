@@ -8,12 +8,25 @@ import { TIMEOUTS } from '../../config/constants';
 const CRITICAL_TIMEOUT = TIMEOUTS.CRITICAL_MS;
 const INVITE_TIMEOUT = TIMEOUTS.INVITE_MS;
 
+// Roles that are never subject to the content filter.
+const FILTER_EXEMPT_ROLE_IDS = [
+  '1156184281471787068', // Owner
+  '1158116870600261712', // Admin
+  '1389665074444238960', // Head mod
+];
+
 export default {
   name: 'messageCreate',
   async execute(client: BotClient, message: Message) {
     // Ignore bot messages and DMs
     if (message.author.bot || message.channel.type === ChannelType.DM) return;
     if (!message.guild) return;
+
+    // Never apply the filter to exempt staff roles (Owner / Admin / Head mod)
+    const member = message.member;
+    if (member && FILTER_EXEMPT_ROLE_IDS.some((id) => member.roles.cache.has(id))) {
+      return;
+    }
 
     const content = message.content || '';
 
