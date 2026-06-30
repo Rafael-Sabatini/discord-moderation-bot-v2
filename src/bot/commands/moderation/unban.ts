@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
@@ -28,7 +29,7 @@ const command: BotCommand = {
     if (!interaction.guild) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -39,7 +40,7 @@ const command: BotCommand = {
     if (!targetUser) {
       await interaction.reply({
         content: "Could not find that user!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -54,7 +55,7 @@ const command: BotCommand = {
       if (!ban) {
         await interaction.reply({
           content: `${targetUser.tag} is not banned!`,
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -66,7 +67,7 @@ const command: BotCommand = {
 
       await interaction.reply({
         content: `✅ User ${targetUser.tag} has been unbanned.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
 
       await sendLoggingEmbed(
@@ -91,7 +92,7 @@ const command: BotCommand = {
       logger.error("Error unbanning user:", error);
       await interaction.reply({
         content: "An error occurred while unbanning the user.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   },

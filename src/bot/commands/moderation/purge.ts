@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
@@ -39,7 +40,7 @@ const command: BotCommand = {
     if (!interaction.guild || !interaction.channel) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -48,7 +49,7 @@ const command: BotCommand = {
     const range = interaction.options.getInteger("range") || 50;
     const channelId = interaction.options.getString("channel");
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
       // Determine target channels based on provided options:

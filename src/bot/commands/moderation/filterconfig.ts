@@ -8,6 +8,7 @@ import {
   StringSelectMenuBuilder,
   ComponentType,
   Interaction,
+  MessageFlags,
 } from "discord.js";
 import { BotCommand } from "../../client";
 import { BlockedWord } from "../../../database/models/BlockedWord";
@@ -27,7 +28,7 @@ const command: BotCommand = {
     if (!interaction.guild || !interaction.member) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -42,10 +43,14 @@ const command: BotCommand = {
     if (!hasRequiredRole) {
       await interaction.reply({
         content: "You need the Head Moderator or Admin role to use this command.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
+
+    // Defer early: building the menu requires a DB query that can exceed the
+    // 3-second interaction window and trigger "Unknown interaction" errors.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
       // Fetch all filter rules for this guild
@@ -54,9 +59,8 @@ const command: BotCommand = {
       });
 
       if (rules.length === 0) {
-        await interaction.reply({
+        await interaction.editReply({
           content: "No filter rules configured for this server.",
-          ephemeral: true,
         });
         return;
       }
@@ -91,7 +95,7 @@ const command: BotCommand = {
         selectMenu
       );
 
-      const response = await interaction.reply({
+      const response = await interaction.editReply({
         embeds: [embed],
         components: [row],
       });
@@ -113,7 +117,7 @@ const command: BotCommand = {
         if (!selectedRule) {
           await selectInteraction.reply({
             content: "Rule not found!",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -147,7 +151,7 @@ const command: BotCommand = {
         const ruleMessage = await selectInteraction.reply({
           embeds: [ruleEmbed],
           components: [actionButtons],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
           fetchReply: true,
         });
 
@@ -179,7 +183,7 @@ const command: BotCommand = {
             const sevMessage = await buttonClick.reply({
               embeds: [severityEmbed],
               components: [severityButtons],
-              ephemeral: true,
+              flags: MessageFlags.Ephemeral,
               fetchReply: true,
             });
 
@@ -203,7 +207,7 @@ const command: BotCommand = {
 
                 await sevButtonClick.reply({
                   embeds: [confirmEmbed],
-                  ephemeral: true,
+                  flags: MessageFlags.Ephemeral,
                 });
 
                 logger.info(
@@ -222,7 +226,7 @@ const command: BotCommand = {
 
                 await sevButtonClick.reply({
                   embeds: [confirmEmbed],
-                  ephemeral: true,
+                  flags: MessageFlags.Ephemeral,
                 });
 
                 logger.info(
@@ -253,7 +257,7 @@ const command: BotCommand = {
             const delMessage = await buttonClick.reply({
               embeds: [confirmEmbed],
               components: [confirmButtons],
-              ephemeral: true,
+              flags: MessageFlags.Ephemeral,
               fetchReply: true,
             });
 
@@ -274,7 +278,7 @@ const command: BotCommand = {
 
                 await deleteButtonClick.reply({
                   embeds: [deletedEmbed],
-                  ephemeral: true,
+                  flags: MessageFlags.Ephemeral,
                 });
 
                 logger.info(
@@ -287,7 +291,7 @@ const command: BotCommand = {
 
                 await deleteButtonClick.reply({
                   embeds: [cancelEmbed],
-                  ephemeral: true,
+                  flags: MessageFlags.Ephemeral,
                 });
               }
             } catch (error) {
@@ -306,10 +310,24 @@ const command: BotCommand = {
       });
     } catch (error) {
       logger.error("Error opening filter configuration:", error);
-      await interaction.reply({
-        content: "An error occurred while opening the filter configuration.",
-        ephemeral: true,
-      });
+      // The interaction is deferred by this point, so edit the deferred reply.
+      // Guard against the reply itself throwing (e.g. expired token).
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply({
+            content:
+              "An error occurred while opening the filter configuration.",
+          });
+        } else {
+          await interaction.reply({
+            content:
+              "An error occurred while opening the filter configuration.",
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+      } catch (replyError) {
+        logger.warn("Could not send filterconfig error reply:", replyError);
+      }
     }
   },
 };

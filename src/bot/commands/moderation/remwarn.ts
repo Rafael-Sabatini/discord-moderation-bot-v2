@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
@@ -24,7 +25,7 @@ const command: BotCommand = {
     if (!interaction.guild) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -37,7 +38,7 @@ const command: BotCommand = {
       if (!warning) {
         await interaction.reply({
           content: "Warning not found!",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -45,7 +46,7 @@ const command: BotCommand = {
       if (warning.guildId !== interaction.guild.id) {
         await interaction.reply({
           content: "This warning is not from this server!",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -59,7 +60,7 @@ const command: BotCommand = {
 
       await interaction.reply({
         content: `✅ Warning removed for ${user.tag}`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
 
       await sendLoggingEmbed(
@@ -82,7 +83,7 @@ const command: BotCommand = {
       logger.error("Error removing warning:", error);
       await interaction.reply({
         content: "An error occurred while removing the warning.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   },

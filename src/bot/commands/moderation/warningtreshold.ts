@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   EmbedBuilder,
@@ -47,7 +48,7 @@ const command: BotCommand = {
     if (!interaction.guild || !interaction.member) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -62,7 +63,7 @@ const command: BotCommand = {
     if (!hasRequiredRole) {
       await interaction.reply({
         content: "You need the Head Moderator or Admin role to use this command.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -75,7 +76,7 @@ const command: BotCommand = {
     if (!ban && !timeout) {
       await interaction.reply({
         content: "You must enable at least one action (ban or timeout)",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -89,7 +90,7 @@ const command: BotCommand = {
         if (duration === 0) {
           await interaction.reply({
             content: "Invalid duration format! Use: 10s, 5m, 2h, or 1d",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -118,7 +119,7 @@ const command: BotCommand = {
         )
         .setTimestamp();
 
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 
       logger.info(
         `Warning threshold configured in guild ${interaction.guild.id}: ${warnCount} warnings, ban=${ban}, timeout=${timeout}, duration=${duration}`
@@ -127,7 +128,7 @@ const command: BotCommand = {
       logger.error("Error configuring warning threshold:", error);
       await interaction.reply({
         content: "An error occurred while configuring the warning threshold.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   },

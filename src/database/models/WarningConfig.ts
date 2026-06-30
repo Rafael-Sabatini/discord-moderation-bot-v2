@@ -38,6 +38,7 @@ const warningConfigSchema = new Schema<IWarningConfig>(
   { timestamps: true }
 );
 
-warningConfigSchema.index({ guildId: 1 });
+// Note: `guildId` already has a unique index via `unique: true` above, so no
+// explicit schema.index({ guildId: 1 }) is needed (it would be a duplicate).
 
 export const WarningConfig = mongoose.model<IWarningConfig>('WarningConfig', warningConfigSchema, 'warningconfigs');

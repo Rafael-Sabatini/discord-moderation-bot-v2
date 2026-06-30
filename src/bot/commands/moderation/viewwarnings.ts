@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
@@ -26,7 +27,7 @@ const command: BotCommand = {
     if (!interaction.guild) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -35,7 +36,7 @@ const command: BotCommand = {
 
     try {
       // Defer the reply to avoid timeout issues with database queries
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       // If a user identifier is provided, show warnings for that specific user
       if (userIdentifier) {

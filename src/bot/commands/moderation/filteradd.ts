@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   EmbedBuilder,
@@ -33,7 +34,7 @@ const command: BotCommand = {
     if (!interaction.guild || !interaction.user || !interaction.member) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -47,7 +48,7 @@ const command: BotCommand = {
       await interaction.reply({
         content:
           "You need the Head Moderator or Admin role to use this command.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -62,7 +63,7 @@ const command: BotCommand = {
       } catch (e) {
         await interaction.reply({
           content: `Invalid regex pattern: ${e instanceof Error ? e.message : "Unknown error"}`,
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -76,7 +77,7 @@ const command: BotCommand = {
       if (existingRule) {
         await interaction.reply({
           content: "A rule with that name already exists!",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -102,7 +103,7 @@ const command: BotCommand = {
         )
         .setTimestamp();
 
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 
       logger.info(
         `Filter rule "${ruleName}" added to guild ${interaction.guild.id} by ${interaction.user.tag}`
@@ -111,7 +112,7 @@ const command: BotCommand = {
       logger.error("Error adding filter rule:", error);
       await interaction.reply({
         content: "An error occurred while adding the filter rule.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   },

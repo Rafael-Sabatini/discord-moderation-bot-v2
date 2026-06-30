@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
@@ -25,7 +26,7 @@ const command: BotCommand = {
     if (!interaction.guild) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -36,7 +37,7 @@ const command: BotCommand = {
     if (!targetUser) {
       await interaction.reply({
         content: "Could not find that user!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -47,7 +48,7 @@ const command: BotCommand = {
       if (member.roles.cache.has(TRUSTED_ROLE_ID)) {
         await interaction.reply({
           content: `${targetUser.tag} is already trusted!`,
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -56,7 +57,7 @@ const command: BotCommand = {
 
       await interaction.reply({
         content: `✅ User ${targetUser.tag} is now trusted.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
 
       logger.info(
@@ -66,7 +67,7 @@ const command: BotCommand = {
       logger.error("Error trusting user:", error);
       await interaction.reply({
         content: "An error occurred while trusting the user.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   },

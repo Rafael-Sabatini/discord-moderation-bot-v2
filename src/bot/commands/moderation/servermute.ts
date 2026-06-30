@@ -1,4 +1,5 @@
 import {
+  MessageFlags,
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   PermissionFlagsBits,
@@ -43,7 +44,7 @@ const command: BotCommand = {
     if (!interaction.guild) {
       await interaction.reply({
         content: "This command can only be used in a server!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -56,7 +57,7 @@ const command: BotCommand = {
     if (!targetUser) {
       await interaction.reply({
         content: "Could not find that user!",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -71,7 +72,7 @@ const command: BotCommand = {
         if (durationMs === 0) {
           await interaction.reply({
             content: "Invalid duration format! Use: 10s, 5m, 2h, or 1d",
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
           return;
         }
@@ -89,7 +90,7 @@ const command: BotCommand = {
       if (existingServermute) {
         await interaction.reply({
           content: `${targetUser.tag} is already server muted!`,
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -104,7 +105,7 @@ const command: BotCommand = {
 
       await interaction.reply({
         content: `✅ User ${targetUser.tag} has been server muted (${durationDisplay}).\nReason: ${reason}`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
 
       await sendLoggingEmbed(
@@ -131,7 +132,7 @@ const command: BotCommand = {
       logger.error("Error server muting user:", error);
       await interaction.reply({
         content: "An error occurred while server muting the user.",
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   },

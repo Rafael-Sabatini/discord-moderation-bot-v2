@@ -2,6 +2,7 @@ import {
   Client,
   Collection,
   GatewayIntentBits,
+  MessageFlags,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -35,11 +36,21 @@ export class BotClient extends Client {
   }
 
   private setupEventListeners(): void {
-    this.on("ready", () => {
+    this.on("clientReady", () => {
       if (this.user) {
         logger.info(`✅ Bot logged in as ${this.user.tag}`);
         logger.info(`📊 Loaded ${this.commands.size} commands`);
       }
+    });
+
+    // Without these, a rejected async listener is re-emitted as an "error"
+    // event and, with no handler, crashes the whole process.
+    this.on("error", (error) => {
+      logger.error("Discord client error:", error);
+    });
+
+    this.on("shardError", (error) => {
+      logger.error("WebSocket shard error:", error);
     });
 
     this.on("interactionCreate", async (interaction) => {
@@ -58,14 +69,30 @@ export class BotClient extends Client {
           `Error executing command ${interaction.commandName}:`,
           error,
         );
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followUp({
-            content: "There was an error executing this command!",
-          });
-        } else {
-          await interaction.reply({
-            content: "There was an error executing this command!",
-          });
+        // Best-effort notice. This must NEVER throw out of the listener — a
+        // rejection here becomes an unhandled client "error" event and crashes
+        // the process. So pick the right method for the interaction's state and
+        // swallow any failure.
+        try {
+          const content = "There was an error executing this command!";
+          if (interaction.deferred) {
+            await interaction.editReply({ content });
+          } else if (interaction.replied) {
+            await interaction.followUp({
+              content,
+              flags: MessageFlags.Ephemeral,
+            });
+          } else {
+            await interaction.reply({
+              content,
+              flags: MessageFlags.Ephemeral,
+            });
+          }
+        } catch (notifyError) {
+          logger.warn(
+            `Could not notify user of error for ${interaction.commandName}:`,
+            notifyError,
+          );
         }
       }
     });
@@ -81,7 +108,11 @@ export class BotClient extends Client {
 
       const commandFiles = fs
         .readdirSync(folderPath)
-        .filter((file) => file.endsWith(".ts") || file.endsWith(".js"));
+        .filter(
+          (file) =>
+            (file.endsWith(".ts") || file.endsWith(".js")) &&
+            !file.endsWith(".d.ts"),
+        );
 
       logger.info(
         `📂 Loading commands from ${folder}: found ${commandFiles.length} files`,
@@ -111,7 +142,11 @@ export class BotClient extends Client {
     const eventsPath = path.join(__dirname, "..", "bot", "events");
     const eventFiles = fs
       .readdirSync(eventsPath)
-      .filter((file) => file.endsWith(".ts") || file.endsWith(".js"));
+      .filter(
+        (file) =>
+          (file.endsWith(".ts") || file.endsWith(".js")) &&
+          !file.endsWith(".d.ts"),
+      );
 
     logger.info(`📂 Loading ${eventFiles.length} events`);
 
